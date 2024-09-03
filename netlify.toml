@@ -1,0 +1,5 @@
+[build]
+	publish = "/dist"
+	command = "npm run db:generate && npm run db:deploy && npm run build"
+	[[plugins]]
+		package = "/plugins/netlify-plugin-evo-start"

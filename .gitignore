@@ -46,3 +46,6 @@ lerna-debug.log*
 .tool-versions
 
 /prisma/migrations/*
+
+# Local Netlify folder
+.netlify
