@@ -3,7 +3,7 @@ FROM node:20-alpine AS builder
 RUN apk update && \
     apk add git ffmpeg wget curl bash
 
-LABEL version="2.1.0" description="Api to control whatsapp features through http requests." 
+LABEL version="2.2.0" description="Api to control whatsapp features through http requests." 
 LABEL maintainer="Davidson Gomes" git="https://github.com/DavidsonGomes"
 LABEL contact="contato@atendai.com"
 
@@ -52,5 +52,7 @@ COPY --from=builder /evolution/runWithProvider.js ./runWithProvider.js
 COPY --from=builder /evolution/tsup.config.ts ./tsup.config.ts
 
 ENV DOCKER_ENV=true
+
+EXPOSE 8080
 
 ENTRYPOINT ["/bin/bash", "-c", ". ./Docker/scripts/deploy_database.sh && npm run start:prod" ]

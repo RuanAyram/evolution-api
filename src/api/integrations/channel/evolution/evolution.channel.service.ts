@@ -1,4 +1,4 @@
-import { Options, SendAudioDto, SendMediaDto, SendTextDto } from '@api/dto/sendMessage.dto';
+import { MediaMessage, Options, SendAudioDto, SendMediaDto, SendTextDto } from '@api/dto/sendMessage.dto';
 import { ProviderFiles } from '@api/provider/sessions';
 import { PrismaRepository } from '@api/repository/repository.service';
 import { chatbotController } from '@api/server.module';
@@ -7,7 +7,10 @@ import { ChannelStartupService } from '@api/services/channel.service';
 import { Events, wa } from '@api/types/wa.types';
 import { Chatwoot, ConfigService, Openai } from '@config/env.config';
 import { BadRequestException, InternalServerErrorException } from '@exceptions';
+import { status } from '@utils/renderStatus';
+import { isURL } from 'class-validator';
 import EventEmitter2 from 'eventemitter2';
+import mime from 'mime';
 import { v4 } from 'uuid';
 
 export class EvolutionStartupService extends ChannelStartupService {
@@ -162,7 +165,7 @@ export class EvolutionStartupService extends ChannelStartupService {
 
         await this.updateContact({
           remoteJid: messageRaw.key.remoteJid,
-          pushName: messageRaw.pushName,
+          pushName: messageRaw.key.fromMe ? '' : messageRaw.key.fromMe == null ? '' : received.pushName,
           profilePicUrl: received.profilePicUrl,
         });
       }
@@ -195,7 +198,7 @@ export class EvolutionStartupService extends ChannelStartupService {
       }
 
       await this.prismaRepository.contact.updateMany({
-        where: { remoteJid: contact.remoteJid },
+        where: { remoteJid: contact.remoteJid, instanceId: this.instanceId },
         data: contactRaw,
       });
       return;
@@ -271,18 +274,61 @@ export class EvolutionStartupService extends ChannelStartupService {
 
       const messageId = v4();
 
-      const messageRaw: any = {
+      let messageRaw: any = {
         key: { fromMe: true, id: messageId, remoteJid: number },
-        message: {
-          ...message,
-          quoted,
-        },
-        messageType: 'conversation',
         messageTimestamp: Math.round(new Date().getTime() / 1000),
         webhookUrl,
         source: 'unknown',
         instanceId: this.instanceId,
+        status: status[1],
       };
+
+      if (message?.mediaType === 'image') {
+        messageRaw = {
+          ...messageRaw,
+          message: {
+            mediaUrl: message.media,
+            quoted,
+          },
+          messageType: 'imageMessage',
+        };
+      } else if (message?.mediaType === 'video') {
+        messageRaw = {
+          ...messageRaw,
+          message: {
+            mediaUrl: message.media,
+            quoted,
+          },
+          messageType: 'videoMessage',
+        };
+      } else if (message?.mediaType === 'audio') {
+        messageRaw = {
+          ...messageRaw,
+          message: {
+            mediaUrl: message.media,
+            quoted,
+          },
+          messageType: 'audioMessage',
+        };
+      } else if (message?.mediaType === 'document') {
+        messageRaw = {
+          ...messageRaw,
+          message: {
+            mediaUrl: message.media,
+            quoted,
+          },
+          messageType: 'documentMessage',
+        };
+      } else {
+        messageRaw = {
+          ...messageRaw,
+          message: {
+            ...message,
+            quoted,
+          },
+          messageType: 'conversation',
+        };
+      }
 
       this.logger.log(messageRaw);
 
@@ -334,28 +380,55 @@ export class EvolutionStartupService extends ChannelStartupService {
     return res;
   }
 
-  public async mediaMessage(data: SendMediaDto, isIntegration = false) {
-    const message = data;
+  protected async prepareMediaMessage(mediaMessage: MediaMessage) {
+    try {
+      if (mediaMessage.mediatype === 'document' && !mediaMessage.fileName) {
+        const regex = new RegExp(/.*\/(.+?)\./);
+        const arrayMatch = regex.exec(mediaMessage.media);
+        mediaMessage.fileName = arrayMatch[1];
+      }
 
-    return await this.sendMessageWithTyping(
-      data.number,
-      { ...message },
-      {
-        delay: data?.delay,
-        presence: 'composing',
-        quoted: data?.quoted,
-        linkPreview: data?.linkPreview,
-        mentionsEveryOne: data?.mentionsEveryOne,
-        mentioned: data?.mentioned,
-      },
-      isIntegration,
-    );
+      if (mediaMessage.mediatype === 'image' && !mediaMessage.fileName) {
+        mediaMessage.fileName = 'image.png';
+      }
+
+      if (mediaMessage.mediatype === 'video' && !mediaMessage.fileName) {
+        mediaMessage.fileName = 'video.mp4';
+      }
+
+      let mimetype: string;
+
+      const prepareMedia: any = {
+        caption: mediaMessage?.caption,
+        fileName: mediaMessage.fileName,
+        mediaType: mediaMessage.mediatype,
+        media: mediaMessage.media,
+        gifPlayback: false,
+      };
+
+      if (isURL(mediaMessage.media)) {
+        mimetype = mime.getType(mediaMessage.media);
+      } else {
+        mimetype = mime.getType(mediaMessage.fileName);
+      }
+
+      prepareMedia.mimetype = mimetype;
+
+      return prepareMedia;
+    } catch (error) {
+      this.logger.error(error);
+      throw new InternalServerErrorException(error?.toString() || error);
+    }
   }
 
-  public async audioWhatsapp(data: SendAudioDto, isIntegration = false) {
-    const message = data;
+  public async mediaMessage(data: SendMediaDto, file?: any, isIntegration = false) {
+    const mediaData: SendMediaDto = { ...data };
 
-    return await this.sendMessageWithTyping(
+    if (file) mediaData.media = file.buffer.toString('base64');
+
+    const message = await this.prepareMediaMessage(mediaData);
+
+    const mediaSent = await this.sendMessageWithTyping(
       data.number,
       { ...message },
       {
@@ -368,6 +441,60 @@ export class EvolutionStartupService extends ChannelStartupService {
       },
       isIntegration,
     );
+
+    return mediaSent;
+  }
+
+  public async processAudio(audio: string, number: string) {
+    number = number.replace(/\D/g, '');
+    const hash = `${number}-${new Date().getTime()}`;
+
+    let mimetype: string;
+
+    const prepareMedia: any = {
+      fileName: `${hash}.mp4`,
+      mediaType: 'audio',
+      media: audio,
+    };
+
+    if (isURL(audio)) {
+      mimetype = mime.getType(audio);
+    } else {
+      mimetype = mime.getType(prepareMedia.fileName);
+    }
+
+    prepareMedia.mimetype = mimetype;
+
+    return prepareMedia;
+  }
+
+  public async audioWhatsapp(data: SendAudioDto, file?: any, isIntegration = false) {
+    const mediaData: SendAudioDto = { ...data };
+
+    if (file?.buffer) {
+      mediaData.audio = file.buffer.toString('base64');
+    } else {
+      console.error('El archivo o buffer no est� definido correctamente.');
+      throw new Error('File or buffer is undefined.');
+    }
+
+    const message = await this.processAudio(mediaData.audio, data.number);
+
+    const audioSent = await this.sendMessageWithTyping(
+      data.number,
+      { ...message },
+      {
+        delay: data?.delay,
+        presence: 'composing',
+        quoted: data?.quoted,
+        linkPreview: data?.linkPreview,
+        mentionsEveryOne: data?.mentionsEveryOne,
+        mentioned: data?.mentioned,
+      },
+      isIntegration,
+    );
+
+    return audioSent;
   }
 
   public async buttonMessage() {
@@ -420,6 +547,9 @@ export class EvolutionStartupService extends ChannelStartupService {
   }
   public async fetchProfile() {
     throw new BadRequestException('Method not available on Evolution Channel');
+  }
+  public async offerCall() {
+    throw new BadRequestException('Method not available on WhatsApp Business API');
   }
   public async sendPresence() {
     throw new BadRequestException('Method not available on Evolution Channel');

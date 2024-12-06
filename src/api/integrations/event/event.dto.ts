@@ -1,10 +1,12 @@
 import { Constructor } from '@api/integrations/integration.dto';
+import { JsonValue } from '@prisma/client/runtime/library';
 
 export class EventDto {
   webhook?: {
     enabled?: boolean;
     events?: string[];
     url?: string;
+    headers?: JsonValue;
     byEvents?: boolean;
     base64?: boolean;
   };
@@ -23,6 +25,16 @@ export class EventDto {
     enabled?: boolean;
     events?: string[];
   };
+
+  pusher?: {
+    enabled?: boolean;
+    appId?: string;
+    key?: string;
+    secret?: string;
+    cluster?: string;
+    useTLS?: boolean;
+    events?: string[];
+  };
 }
 
 export function EventInstanceMixin<TBase extends Constructor>(Base: TBase) {
@@ -30,6 +42,7 @@ export function EventInstanceMixin<TBase extends Constructor>(Base: TBase) {
     webhook?: {
       enabled?: boolean;
       events?: string[];
+      headers?: JsonValue;
       url?: string;
       byEvents?: boolean;
       base64?: boolean;
@@ -47,6 +60,16 @@ export function EventInstanceMixin<TBase extends Constructor>(Base: TBase) {
 
     rabbitmq?: {
       enabled?: boolean;
+      events?: string[];
+    };
+
+    pusher?: {
+      enabled?: boolean;
+      appId?: string;
+      key?: string;
+      secret?: string;
+      cluster?: string;
+      useTLS?: boolean;
       events?: string[];
     };
   };

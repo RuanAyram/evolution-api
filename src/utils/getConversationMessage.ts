@@ -15,8 +15,9 @@ const getTypeMessage = (msg: any) => {
       msg?.message?.viewOnceMessageV2?.message?.imageMessage?.url ||
       msg?.message?.viewOnceMessageV2?.message?.videoMessage?.url ||
       msg?.message?.viewOnceMessageV2?.message?.audioMessage?.url,
-    listResponseMessage: msg?.message?.listResponseMessage?.singleSelectReply?.selectedRowId,
+    listResponseMessage: msg?.message?.listResponseMessage?.title,
     responseRowId: msg?.message?.listResponseMessage?.singleSelectReply?.selectedRowId,
+    templateButtonReplyMessage: msg?.message?.templateButtonReplyMessage?.selectedId,
     // Medias
     audioMessage: msg?.message?.speechToText
       ? msg?.message?.speechToText
@@ -41,8 +42,8 @@ const getTypeMessage = (msg: any) => {
             : ''
         }`
       : undefined,
-    externalAdReplyBody: msg?.message?.extendedTextMessage?.contextInfo?.externalAdReply?.body
-      ? `externalAdReplyBody|${msg.message.extendedTextMessage.contextInfo.externalAdReply.body}`
+    externalAdReplyBody: msg?.contextInfo?.externalAdReply?.body
+      ? `externalAdReplyBody|${msg.contextInfo.externalAdReply.body}`
       : undefined,
   };
 
@@ -57,7 +58,7 @@ const getMessageContent = (types: any) => {
   let result = typeKey ? types[typeKey] : undefined;
 
   if (types.externalAdReplyBody) {
-      result = result ? `${result}\n${types.externalAdReplyBody}` : types.externalAdReplyBody;
+    result = result ? `${result}\n${types.externalAdReplyBody}` : types.externalAdReplyBody;
   }
 
   return result;

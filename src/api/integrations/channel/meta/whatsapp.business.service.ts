@@ -4,7 +4,7 @@ import {
   MediaMessage,
   Options,
   SendAudioDto,
-  SendButtonDto,
+  SendButtonsDto,
   SendContactDto,
   SendListDto,
   SendLocationDto,
@@ -22,6 +22,7 @@ import { ChannelStartupService } from '@api/services/channel.service';
 import { Events, wa } from '@api/types/wa.types';
 import { Chatwoot, ConfigService, Database, Openai, S3, WaBusiness } from '@config/env.config';
 import { BadRequestException, InternalServerErrorException } from '@exceptions';
+import { status } from '@utils/renderStatus';
 import axios from 'axios';
 import { arrayUnique, isURL } from 'class-validator';
 import EventEmitter2 from 'eventemitter2';
@@ -386,7 +387,7 @@ export class BusinessStartupService extends ChannelStartupService {
               ...this.messageInteractiveJson(received),
             },
             contextInfo: this.messageInteractiveJson(received)?.contextInfo,
-            messageType: 'conversation',
+            messageType: 'interactiveMessage',
             messageTimestamp: parseInt(received.messages[0].timestamp) as number,
             source: 'unknown',
             instanceId: this.instanceId,
@@ -399,7 +400,7 @@ export class BusinessStartupService extends ChannelStartupService {
               ...this.messageButtonJson(received),
             },
             contextInfo: this.messageButtonJson(received)?.contextInfo,
-            messageType: 'conversation',
+            messageType: 'buttonMessage',
             messageTimestamp: parseInt(received.messages[0].timestamp) as number,
             source: 'unknown',
             instanceId: this.instanceId,
@@ -425,7 +426,7 @@ export class BusinessStartupService extends ChannelStartupService {
               ...this.messageContactsJson(received),
             },
             contextInfo: this.messageContactsJson(received)?.contextInfo,
-            messageType: 'conversation',
+            messageType: 'contactMessage',
             messageTimestamp: parseInt(received.messages[0].timestamp) as number,
             source: 'unknown',
             instanceId: this.instanceId,
@@ -895,12 +896,12 @@ export class BusinessStartupService extends ChannelStartupService {
 
       const messageRaw: any = {
         key: { fromMe: true, id: messageSent?.messages[0]?.id, remoteJid: this.createJid(number) },
-        //pushName: messageSent.pushName,
         message: this.convertMessageToRaw(message, content),
         messageType: this.renderMessageType(content.type),
         messageTimestamp: (messageSent?.messages[0]?.timestamp as number) || Math.round(new Date().getTime() / 1000),
         instanceId: this.instanceId,
         webhookUrl,
+        status: status[1],
         source: 'unknown',
       };
 
@@ -1026,10 +1027,14 @@ export class BusinessStartupService extends ChannelStartupService {
     }
   }
 
-  public async mediaMessage(data: SendMediaDto, isIntegration = false) {
-    const message = await this.prepareMediaMessage(data);
+  public async mediaMessage(data: SendMediaDto, file?: any, isIntegration = false) {
+    const mediaData: SendMediaDto = { ...data };
 
-    return await this.sendMessageWithTyping(
+    if (file) mediaData.media = file.buffer.toString('base64');
+
+    const message = await this.prepareMediaMessage(mediaData);
+
+    const mediaSent = await this.sendMessageWithTyping(
       data.number,
       { ...message },
       {
@@ -1042,6 +1047,8 @@ export class BusinessStartupService extends ChannelStartupService {
       },
       isIntegration,
     );
+
+    return mediaSent;
   }
 
   public async processAudio(audio: string, number: string) {
@@ -1072,10 +1079,19 @@ export class BusinessStartupService extends ChannelStartupService {
     return prepareMedia;
   }
 
-  public async audioWhatsapp(data: SendAudioDto, isIntegration = false) {
-    const message = await this.processAudio(data.audio, data.number);
+  public async audioWhatsapp(data: SendAudioDto, file?: any, isIntegration = false) {
+    const mediaData: SendAudioDto = { ...data };
 
-    return await this.sendMessageWithTyping(
+    if (file?.buffer) {
+      mediaData.audio = file.buffer.toString('base64');
+    } else {
+      console.error('El archivo no tiene buffer o file es undefined');
+      throw new Error('File or buffer is undefined');
+    }
+
+    const message = await this.processAudio(mediaData.audio, data.number);
+
+    const audioSent = await this.sendMessageWithTyping(
       data.number,
       { ...message },
       {
@@ -1088,13 +1104,15 @@ export class BusinessStartupService extends ChannelStartupService {
       },
       isIntegration,
     );
+
+    return audioSent;
   }
 
-  public async buttonMessage(data: SendButtonDto) {
+  public async buttonMessage(data: SendButtonsDto) {
     const embeddedMedia: any = {};
 
     const btnItems = {
-      text: data.buttons.map((btn) => btn.text),
+      text: data.buttons.map((btn) => btn.displayText),
       ids: data.buttons.map((btn) => btn.id),
     };
 
@@ -1110,7 +1128,7 @@ export class BusinessStartupService extends ChannelStartupService {
           return {
             type: 'reply',
             reply: {
-              title: button.text,
+              title: button.displayText,
               id: button.id,
             },
           };
@@ -1345,6 +1363,9 @@ export class BusinessStartupService extends ChannelStartupService {
     throw new BadRequestException('Method not available on WhatsApp Business API');
   }
   public async fetchProfile() {
+    throw new BadRequestException('Method not available on WhatsApp Business API');
+  }
+  public async offerCall() {
     throw new BadRequestException('Method not available on WhatsApp Business API');
   }
   public async sendPresence() {

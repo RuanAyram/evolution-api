@@ -50,7 +50,9 @@ export class EvolutionBotController extends ChatbotController implements Chatbot
       !data.stopBotFromMe ||
       !data.keepOpen ||
       !data.debounceTime ||
-      !data.ignoreJids
+      !data.ignoreJids ||
+      !data.splitMessages ||
+      !data.timePerChar
     ) {
       const defaultSettingCheck = await this.settingsRepository.findFirst({
         where: {
@@ -58,15 +60,25 @@ export class EvolutionBotController extends ChatbotController implements Chatbot
         },
       });
 
-      if (!data.expire) data.expire = defaultSettingCheck?.expire || 0;
-      if (!data.keywordFinish) data.keywordFinish = defaultSettingCheck?.keywordFinish || '';
-      if (!data.delayMessage) data.delayMessage = defaultSettingCheck?.delayMessage || 1000;
-      if (!data.unknownMessage) data.unknownMessage = defaultSettingCheck?.unknownMessage || '';
-      if (!data.listeningFromMe) data.listeningFromMe = defaultSettingCheck?.listeningFromMe || false;
-      if (!data.stopBotFromMe) data.stopBotFromMe = defaultSettingCheck?.stopBotFromMe || false;
-      if (!data.keepOpen) data.keepOpen = defaultSettingCheck?.keepOpen || false;
-      if (!data.debounceTime) data.debounceTime = defaultSettingCheck?.debounceTime || 0;
-      if (!data.ignoreJids) data.ignoreJids = defaultSettingCheck?.ignoreJids || [];
+      if (data.expire === undefined || data.expire === null) data.expire = defaultSettingCheck.expire;
+      if (data.keywordFinish === undefined || data.keywordFinish === null)
+        data.keywordFinish = defaultSettingCheck.keywordFinish;
+      if (data.delayMessage === undefined || data.delayMessage === null)
+        data.delayMessage = defaultSettingCheck.delayMessage;
+      if (data.unknownMessage === undefined || data.unknownMessage === null)
+        data.unknownMessage = defaultSettingCheck.unknownMessage;
+      if (data.listeningFromMe === undefined || data.listeningFromMe === null)
+        data.listeningFromMe = defaultSettingCheck.listeningFromMe;
+      if (data.stopBotFromMe === undefined || data.stopBotFromMe === null)
+        data.stopBotFromMe = defaultSettingCheck.stopBotFromMe;
+      if (data.keepOpen === undefined || data.keepOpen === null) data.keepOpen = defaultSettingCheck.keepOpen;
+      if (data.debounceTime === undefined || data.debounceTime === null)
+        data.debounceTime = defaultSettingCheck.debounceTime;
+      if (data.ignoreJids === undefined || data.ignoreJids === null) data.ignoreJids = defaultSettingCheck.ignoreJids;
+      if (data.splitMessages === undefined || data.splitMessages === null)
+        data.splitMessages = defaultSettingCheck?.splitMessages ?? false;
+      if (data.timePerChar === undefined || data.timePerChar === null)
+        data.timePerChar = defaultSettingCheck?.timePerChar ?? 0;
 
       if (!defaultSettingCheck) {
         await this.settings(instance, {
@@ -79,6 +91,8 @@ export class EvolutionBotController extends ChatbotController implements Chatbot
           keepOpen: data.keepOpen,
           debounceTime: data.debounceTime,
           ignoreJids: data.ignoreJids,
+          splitMessages: data.splitMessages,
+          timePerChar: data.timePerChar,
         });
       }
     }
@@ -162,6 +176,8 @@ export class EvolutionBotController extends ChatbotController implements Chatbot
           triggerOperator: data.triggerOperator,
           triggerValue: data.triggerValue,
           ignoreJids: data.ignoreJids,
+          splitMessages: data.splitMessages,
+          timePerChar: data.timePerChar,
         },
       });
 
@@ -335,6 +351,8 @@ export class EvolutionBotController extends ChatbotController implements Chatbot
           triggerOperator: data.triggerOperator,
           triggerValue: data.triggerValue,
           ignoreJids: data.ignoreJids,
+          splitMessages: data.splitMessages,
+          timePerChar: data.timePerChar,
         },
       });
 
@@ -420,6 +438,8 @@ export class EvolutionBotController extends ChatbotController implements Chatbot
             debounceTime: data.debounceTime,
             botIdFallback: data.botIdFallback,
             ignoreJids: data.ignoreJids,
+            splitMessages: data.splitMessages,
+            timePerChar: data.timePerChar,
           },
         });
 
@@ -434,6 +454,8 @@ export class EvolutionBotController extends ChatbotController implements Chatbot
           debounceTime: updateSettings.debounceTime,
           botIdFallback: updateSettings.botIdFallback,
           ignoreJids: updateSettings.ignoreJids,
+          splitMessages: updateSettings.splitMessages,
+          timePerChar: updateSettings.timePerChar,
         };
       }
 
@@ -449,6 +471,8 @@ export class EvolutionBotController extends ChatbotController implements Chatbot
           debounceTime: data.debounceTime,
           botIdFallback: data.botIdFallback,
           ignoreJids: data.ignoreJids,
+          splitMessages: data.splitMessages,
+          timePerChar: data.timePerChar,
           instanceId: instanceId,
         },
       });
@@ -464,6 +488,8 @@ export class EvolutionBotController extends ChatbotController implements Chatbot
         debounceTime: newSetttings.debounceTime,
         botIdFallback: newSetttings.botIdFallback,
         ignoreJids: newSetttings.ignoreJids,
+        splitMessages: newSetttings.splitMessages,
+        timePerChar: newSetttings.timePerChar,
       };
     } catch (error) {
       this.logger.error(error);
@@ -500,6 +526,8 @@ export class EvolutionBotController extends ChatbotController implements Chatbot
           stopBotFromMe: false,
           keepOpen: false,
           ignoreJids: [],
+          splitMessages: false,
+          timePerChar: 0,
           botIdFallback: '',
           fallback: null,
         };
@@ -514,6 +542,8 @@ export class EvolutionBotController extends ChatbotController implements Chatbot
         stopBotFromMe: settings.stopBotFromMe,
         keepOpen: settings.keepOpen,
         ignoreJids: settings.ignoreJids,
+        splitMessages: settings.splitMessages,
+        timePerChar: settings.timePerChar,
         botIdFallback: settings.botIdFallback,
         fallback: settings.Fallback,
       };
@@ -698,7 +728,7 @@ export class EvolutionBotController extends ChatbotController implements Chatbot
 
       const content = getConversationMessage(msg);
 
-      const findBot = (await this.findBotTrigger(
+      let findBot = (await this.findBotTrigger(
         this.botRepository,
         this.settingsRepository,
         content,
@@ -706,19 +736,49 @@ export class EvolutionBotController extends ChatbotController implements Chatbot
         session,
       )) as EvolutionBot;
 
-      if (!findBot) return;
+      if (!findBot) {
+        const fallback = await this.settingsRepository.findFirst({
+          where: {
+            instanceId: instance.instanceId,
+          },
+        });
 
-      let listeningFromMe = findBot.listeningFromMe;
-      let stopBotFromMe = findBot.stopBotFromMe;
-      let debounceTime = findBot.debounceTime;
+        if (fallback?.botIdFallback) {
+          const findFallback = await this.botRepository.findFirst({
+            where: {
+              id: fallback.botIdFallback,
+            },
+          });
 
-      if (!listeningFromMe || !stopBotFromMe || !debounceTime) {
-        if (!listeningFromMe) listeningFromMe = settings.listeningFromMe;
-
-        if (!stopBotFromMe) stopBotFromMe = settings.stopBotFromMe;
-
-        if (!debounceTime) debounceTime = settings.debounceTime;
+          findBot = findFallback;
+        } else {
+          return;
+        }
       }
+
+      let expire = findBot?.expire;
+      let keywordFinish = findBot?.keywordFinish;
+      let delayMessage = findBot?.delayMessage;
+      let unknownMessage = findBot?.unknownMessage;
+      let listeningFromMe = findBot?.listeningFromMe;
+      let stopBotFromMe = findBot?.stopBotFromMe;
+      let keepOpen = findBot?.keepOpen;
+      let debounceTime = findBot?.debounceTime;
+      let ignoreJids = findBot?.ignoreJids;
+      let splitMessages = findBot?.splitMessages;
+      let timePerChar = findBot?.timePerChar;
+
+      if (expire === undefined || expire === null) expire = settings.expire;
+      if (keywordFinish === undefined || keywordFinish === null) keywordFinish = settings.keywordFinish;
+      if (delayMessage === undefined || delayMessage === null) delayMessage = settings.delayMessage;
+      if (unknownMessage === undefined || unknownMessage === null) unknownMessage = settings.unknownMessage;
+      if (listeningFromMe === undefined || listeningFromMe === null) listeningFromMe = settings.listeningFromMe;
+      if (stopBotFromMe === undefined || stopBotFromMe === null) stopBotFromMe = settings.stopBotFromMe;
+      if (keepOpen === undefined || keepOpen === null) keepOpen = settings.keepOpen;
+      if (debounceTime === undefined || debounceTime === null) debounceTime = settings.debounceTime;
+      if (ignoreJids === undefined || ignoreJids === null) ignoreJids = settings.ignoreJids;
+      if (splitMessages === undefined || splitMessages === null) splitMessages = settings?.splitMessages ?? false;
+      if (timePerChar === undefined || timePerChar === null) timePerChar = settings?.timePerChar ?? 0;
 
       const key = msg.key as {
         id: string;
@@ -754,7 +814,20 @@ export class EvolutionBotController extends ChatbotController implements Chatbot
             remoteJid,
             findBot,
             session,
-            settings,
+            {
+              ...settings,
+              expire,
+              keywordFinish,
+              delayMessage,
+              unknownMessage,
+              listeningFromMe,
+              stopBotFromMe,
+              keepOpen,
+              debounceTime,
+              ignoreJids,
+              splitMessages,
+              timePerChar,
+            },
             debouncedContent,
             msg?.pushName,
           );
@@ -765,7 +838,20 @@ export class EvolutionBotController extends ChatbotController implements Chatbot
           remoteJid,
           findBot,
           session,
-          settings,
+          {
+            ...settings,
+            expire,
+            keywordFinish,
+            delayMessage,
+            unknownMessage,
+            listeningFromMe,
+            stopBotFromMe,
+            keepOpen,
+            debounceTime,
+            ignoreJids,
+            splitMessages,
+            timePerChar,
+          },
           content,
           msg?.pushName,
         );

@@ -14,6 +14,7 @@ import { Logger } from '@config/logger.config';
 import { NotFoundException } from '@exceptions';
 import { Contact, Message } from '@prisma/client';
 import { WASocket } from 'baileys';
+import { isArray } from 'class-validator';
 import EventEmitter2 from 'eventemitter2';
 import { v4 } from 'uuid';
 
@@ -34,6 +35,7 @@ export class ChannelStartupService {
   public readonly localChatwoot: wa.LocalChatwoot = {};
   public readonly localProxy: wa.LocalProxy = {};
   public readonly localSettings: wa.LocalSettings = {};
+  public readonly localWebhook: wa.LocalWebHook = {};
 
   public chatwootService = new ChatwootService(
     waMonitor,
@@ -122,6 +124,17 @@ export class ChannelStartupService {
 
   public get wuid() {
     return this.instance.wuid;
+  }
+
+  public async loadWebhook() {
+    const data = await this.prismaRepository.webhook.findUnique({
+      where: {
+        instanceId: this.instanceId,
+      },
+    });
+
+    this.localWebhook.enabled = data?.enabled;
+    this.localWebhook.webhookBase64 = data?.webhookBase64;
   }
 
   public async loadSettings() {
@@ -294,7 +307,7 @@ export class ChannelStartupService {
     this.clearCacheChatwoot();
   }
 
-  public async findChatwoot(): Promise<ChatwootDto> {
+  public async findChatwoot(): Promise<ChatwootDto | null> {
     if (!this.configService.get<Chatwoot>('CHATWOOT').ENABLED) {
       return null;
     }
@@ -577,6 +590,7 @@ export class ChannelStartupService {
         messageTimestamp: true,
         instanceId: true,
         source: true,
+        contextInfo: true,
         MessageUpdate: {
           select: {
             status: true,
@@ -600,7 +614,7 @@ export class ChannelStartupService {
       where: {
         instanceId: this.instanceId,
         remoteJid: query.where?.remoteJid,
-        messageId: query.where?.id,
+        keyId: query.where?.id,
       },
       skip: query.offset * (query?.page === 1 ? 0 : (query?.page as number) - 1),
       take: query.offset,
@@ -614,62 +628,112 @@ export class ChannelStartupService {
         : this.createJid(query.where?.remoteJid)
       : null;
 
-    let result;
-    if (remoteJid) {
-      result = await this.prismaRepository.$queryRaw`
-            SELECT
-                "Chat"."id",
-                "Chat"."remoteJid",
-                "Chat"."name",
-                "Chat"."labels",
-                "Chat"."createdAt",
-                "Chat"."updatedAt",
-                "Contact"."pushName",
-                "Contact"."profilePicUrl"
-            FROM "Chat"
-            INNER JOIN "Message" ON "Chat"."remoteJid" = "Message"."key"->>'remoteJid'
-            LEFT JOIN "Contact" ON "Chat"."remoteJid" = "Contact"."remoteJid"
-            WHERE "Chat"."instanceId" = ${this.instanceId}
-            AND "Chat"."remoteJid" = ${remoteJid}
-            GROUP BY
-                "Chat"."id",
-                "Chat"."remoteJid",
-                "Chat"."name",
-                "Chat"."labels",
-                "Chat"."createdAt",
-                "Chat"."updatedAt",
-                "Contact"."pushName",
-                "Contact"."profilePicUrl"
-            ORDER BY "Chat"."updatedAt" DESC;
-        `;
+    let results = [];
+
+    if (!remoteJid) {
+      results = await this.prismaRepository.$queryRaw`
+          SELECT
+            "Chat"."id",
+            "Chat"."remoteJid",
+            "Chat"."name",
+            "Chat"."labels",
+            "Chat"."createdAt",
+            "Chat"."updatedAt",
+            "Contact"."pushName",
+            "Contact"."profilePicUrl",
+            "Chat"."unreadMessages",
+            (ARRAY_AGG("Message"."id" ORDER BY "Message"."messageTimestamp" DESC))[1] AS last_message_id,
+            (ARRAY_AGG("Message"."key" ORDER BY "Message"."messageTimestamp" DESC))[1] AS last_message_key,
+            (ARRAY_AGG("Message"."pushName" ORDER BY "Message"."messageTimestamp" DESC))[1] AS last_message_push_name,
+            (ARRAY_AGG("Message"."participant" ORDER BY "Message"."messageTimestamp" DESC))[1] AS last_message_participant,
+            (ARRAY_AGG("Message"."messageType" ORDER BY "Message"."messageTimestamp" DESC))[1] AS last_message_message_type,
+            (ARRAY_AGG("Message"."message" ORDER BY "Message"."messageTimestamp" DESC))[1] AS last_message_message,
+            (ARRAY_AGG("Message"."contextInfo" ORDER BY "Message"."messageTimestamp" DESC))[1] AS last_message_context_info,
+            (ARRAY_AGG("Message"."source" ORDER BY "Message"."messageTimestamp" DESC))[1] AS last_message_source,
+            (ARRAY_AGG("Message"."messageTimestamp" ORDER BY "Message"."messageTimestamp" DESC))[1] AS last_message_message_timestamp,
+            (ARRAY_AGG("Message"."instanceId" ORDER BY "Message"."messageTimestamp" DESC))[1] AS last_message_instance_id,
+            (ARRAY_AGG("Message"."sessionId" ORDER BY "Message"."messageTimestamp" DESC))[1] AS last_message_session_id,
+            (ARRAY_AGG("Message"."status" ORDER BY "Message"."messageTimestamp" DESC))[1] AS last_message_status
+          FROM "Chat"
+          LEFT JOIN "Message" ON "Message"."messageType" != 'reactionMessage' and "Message"."key"->>'remoteJid' = "Chat"."remoteJid"
+          LEFT JOIN "Contact" ON "Chat"."remoteJid" = "Contact"."remoteJid"
+          WHERE 
+            "Chat"."instanceId" = ${this.instanceId}
+          GROUP BY
+            "Chat"."id",
+            "Chat"."remoteJid",
+            "Contact"."id"
+          ORDER BY last_message_message_timestamp DESC NULLS LAST, "Chat"."updatedAt" DESC;
+          `;
     } else {
-      result = await this.prismaRepository.$queryRaw`
-            SELECT
-                "Chat"."id",
-                "Chat"."remoteJid",
-                "Chat"."name",
-                "Chat"."labels",
-                "Chat"."createdAt",
-                "Chat"."updatedAt",
-                "Contact"."pushName",
-                "Contact"."profilePicUrl"
-            FROM "Chat"
-            INNER JOIN "Message" ON "Chat"."remoteJid" = "Message"."key"->>'remoteJid'
-            LEFT JOIN "Contact" ON "Chat"."remoteJid" = "Contact"."remoteJid"
-            WHERE "Chat"."instanceId" = ${this.instanceId}
-            GROUP BY
-                "Chat"."id",
-                "Chat"."remoteJid",
-                "Chat"."name",
-                "Chat"."labels",
-                "Chat"."createdAt",
-                "Chat"."updatedAt",
-                "Contact"."pushName",
-                "Contact"."profilePicUrl"
-            ORDER BY "Chat"."updatedAt" DESC;
-        `;
+      results = await this.prismaRepository.$queryRaw`
+          SELECT
+            "Chat"."id",
+            "Chat"."remoteJid",
+            "Chat"."name",
+            "Chat"."labels",
+            "Chat"."createdAt",
+            "Chat"."updatedAt",
+            "Contact"."pushName",
+            "Contact"."profilePicUrl",
+            "Chat"."unreadMessages",
+            (ARRAY_AGG("Message"."id" ORDER BY "Message"."messageTimestamp" DESC))[1] AS last_message_id,
+            (ARRAY_AGG("Message"."key" ORDER BY "Message"."messageTimestamp" DESC))[1] AS last_message_key,
+            (ARRAY_AGG("Message"."pushName" ORDER BY "Message"."messageTimestamp" DESC))[1] AS last_message_push_name,
+            (ARRAY_AGG("Message"."participant" ORDER BY "Message"."messageTimestamp" DESC))[1] AS last_message_participant,
+            (ARRAY_AGG("Message"."messageType" ORDER BY "Message"."messageTimestamp" DESC))[1] AS last_message_message_type,
+            (ARRAY_AGG("Message"."message" ORDER BY "Message"."messageTimestamp" DESC))[1] AS last_message_message,
+            (ARRAY_AGG("Message"."contextInfo" ORDER BY "Message"."messageTimestamp" DESC))[1] AS last_message_context_info,
+            (ARRAY_AGG("Message"."source" ORDER BY "Message"."messageTimestamp" DESC))[1] AS last_message_source,
+            (ARRAY_AGG("Message"."messageTimestamp" ORDER BY "Message"."messageTimestamp" DESC))[1] AS last_message_message_timestamp,
+            (ARRAY_AGG("Message"."instanceId" ORDER BY "Message"."messageTimestamp" DESC))[1] AS last_message_instance_id,
+            (ARRAY_AGG("Message"."sessionId" ORDER BY "Message"."messageTimestamp" DESC))[1] AS last_message_session_id,
+            (ARRAY_AGG("Message"."status" ORDER BY "Message"."messageTimestamp" DESC))[1] AS last_message_status
+          FROM "Chat"
+          LEFT JOIN "Message" ON "Message"."messageType" != 'reactionMessage' and "Message"."key"->>'remoteJid' = "Chat"."remoteJid"
+          LEFT JOIN "Contact" ON "Chat"."remoteJid" = "Contact"."remoteJid"
+          WHERE 
+            "Chat"."instanceId" = ${this.instanceId} AND "Chat"."remoteJid" = ${remoteJid} and "Message"."messageType" != 'reactionMessage'
+          GROUP BY
+            "Chat"."id",
+            "Chat"."remoteJid",
+            "Contact"."id"
+          ORDER BY last_message_message_timestamp DESC NULLS LAST, "Chat"."updatedAt" DESC;
+          `;
     }
 
-    return result;
+    if (results && isArray(results) && results.length > 0) {
+      return results.map((chat) => {
+        return {
+          id: chat.id,
+          remoteJid: chat.remoteJid,
+          name: chat.name,
+          labels: chat.labels,
+          createdAt: chat.createdAt,
+          updatedAt: chat.updatedAt,
+          pushName: chat.pushName,
+          profilePicUrl: chat.profilePicUrl,
+          unreadMessages: chat.unreadMessages,
+          lastMessage: chat.last_message_id
+            ? {
+                id: chat.last_message_id,
+                key: chat.last_message_key,
+                pushName: chat.last_message_push_name,
+                participant: chat.last_message_participant,
+                messageType: chat.last_message_message_type,
+                message: chat.last_message_message,
+                contextInfo: chat.last_message_context_info,
+                source: chat.last_message_source,
+                messageTimestamp: chat.last_message_message_timestamp,
+                instanceId: chat.last_message_instance_id,
+                sessionId: chat.last_message_session_id,
+                status: chat.last_message_status,
+              }
+            : undefined,
+        };
+      });
+    }
+
+    return [];
   }
 }

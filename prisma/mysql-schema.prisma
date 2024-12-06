@@ -104,6 +104,7 @@ model Instance {
   EvolutionBotSetting     EvolutionBotSetting?
   Flowise                 Flowise[]
   FlowiseSetting          FlowiseSetting?
+  Pusher                  Pusher?
 }
 
 model Session {
@@ -123,6 +124,9 @@ model Chat {
   updatedAt  DateTime? @updatedAt @db.Timestamp
   Instance   Instance  @relation(fields: [instanceId], references: [id], onDelete: Cascade)
   instanceId String
+  unreadMessages Int       @default(0)
+  @@index([instanceId])
+  @@index([remoteJid])
 }
 
 model Contact {
@@ -136,6 +140,8 @@ model Contact {
   instanceId    String
 
   @@unique([remoteJid, instanceId])
+  @@index([remoteJid])
+  @@index([instanceId])
 }
 
 model Message {
@@ -159,9 +165,11 @@ model Message {
   MessageUpdate                MessageUpdate[]
   Media                        Media?
   webhookUrl                   String?         @db.VarChar(500)
+  status                       String?         @db.VarChar(30)
 
   sessionId String?
   session   IntegrationSession? @relation(fields: [sessionId], references: [id])
+  @@index([instanceId])
 }
 
 model MessageUpdate {
@@ -176,11 +184,14 @@ model MessageUpdate {
   messageId   String
   Instance    Instance @relation(fields: [instanceId], references: [id], onDelete: Cascade)
   instanceId  String
+  @@index([instanceId])
+  @@index([messageId])
 }
 
 model Webhook {
   id              String    @id @default(cuid())
   url             String    @db.VarChar(500)
+  headers         Json?     @db.Json
   enabled         Boolean?  @default(true)
   events          Json?     @db.Json
   webhookByEvents Boolean?  @default(false)
@@ -189,6 +200,7 @@ model Webhook {
   updatedAt       DateTime  @updatedAt @db.Timestamp
   Instance        Instance  @relation(fields: [instanceId], references: [id], onDelete: Cascade)
   instanceId      String    @unique
+  @@index([instanceId])
 }
 
 model Chatwoot {
@@ -255,6 +267,7 @@ model Setting {
   updatedAt       DateTime  @updatedAt @db.Timestamp
   Instance        Instance  @relation(fields: [instanceId], references: [id], onDelete: Cascade)
   instanceId      String    @unique
+  @@index([instanceId])
 }
 
 model Rabbitmq {
@@ -280,6 +293,21 @@ model Sqs {
 model Websocket {
   id         String    @id @default(cuid())
   enabled    Boolean   @default(false)
+  events     Json      @db.Json
+  createdAt  DateTime? @default(dbgenerated("CURRENT_TIMESTAMP")) @db.Timestamp
+  updatedAt  DateTime  @updatedAt @db.Timestamp
+  Instance   Instance  @relation(fields: [instanceId], references: [id], onDelete: Cascade)
+  instanceId String    @unique
+}
+
+model Pusher {
+  id         String    @id @default(cuid())
+  enabled    Boolean   @default(false)
+  appId      String    @db.VarChar(100)
+  key        String    @db.VarChar(100)
+  secret     String    @db.VarChar(100)
+  cluster    String    @db.VarChar(100)
+  useTLS     Boolean   @default(false)
   events     Json      @db.Json
   createdAt  DateTime? @default(dbgenerated("CURRENT_TIMESTAMP")) @db.Timestamp
   updatedAt  DateTime  @updatedAt @db.Timestamp
@@ -395,6 +423,8 @@ model OpenaiBot {
   keepOpen          Boolean?         @default(false)
   debounceTime      Int?             @db.Int
   ignoreJids        Json?
+  splitMessages     Boolean?         @default(false)
+  timePerChar       Int?             @default(50) @db.Int
   triggerType       TriggerType?
   triggerOperator   TriggerOperator?
   triggerValue      String?
@@ -418,6 +448,8 @@ model OpenaiSetting {
   keepOpen         Boolean?     @default(false)
   debounceTime     Int?         @db.Int
   ignoreJids       Json?
+  splitMessages    Boolean?     @default(false)
+  timePerChar      Int?         @default(50) @db.Int
   speechToText     Boolean?     @default(false)
   createdAt        DateTime?    @default(dbgenerated("CURRENT_TIMESTAMP")) @db.Timestamp
   updatedAt        DateTime     @updatedAt @db.Timestamp
@@ -457,6 +489,8 @@ model Dify {
   keepOpen        Boolean?         @default(false)
   debounceTime    Int?             @db.Int
   ignoreJids      Json?
+  splitMessages   Boolean?         @default(false)
+  timePerChar     Int?             @default(50) @db.Int
   triggerType     TriggerType?
   triggerOperator TriggerOperator?
   triggerValue    String?
@@ -478,6 +512,8 @@ model DifySetting {
   keepOpen        Boolean?  @default(false)
   debounceTime    Int?      @db.Int
   ignoreJids      Json?
+  splitMessages   Boolean?  @default(false)
+  timePerChar     Int?      @default(50) @db.Int
   createdAt       DateTime? @default(dbgenerated("CURRENT_TIMESTAMP")) @db.Timestamp
   updatedAt       DateTime  @updatedAt @db.Timestamp
   Fallback        Dify?     @relation(fields: [difyIdFallback], references: [id])
@@ -501,6 +537,8 @@ model EvolutionBot {
   keepOpen            Boolean?              @default(false)
   debounceTime        Int?                  @db.Int
   ignoreJids          Json?
+  splitMessages       Boolean?              @default(false)
+  timePerChar         Int?                  @default(50) @db.Int
   triggerType         TriggerType?
   triggerOperator     TriggerOperator?
   triggerValue        String?
@@ -522,6 +560,8 @@ model EvolutionBotSetting {
   keepOpen        Boolean?      @default(false)
   debounceTime    Int?          @db.Int
   ignoreJids      Json?
+  splitMessages   Boolean?      @default(false)
+  timePerChar     Int?          @default(50) @db.Int
   createdAt       DateTime?     @default(dbgenerated("CURRENT_TIMESTAMP")) @db.Timestamp
   updatedAt       DateTime      @updatedAt @db.Timestamp
   Fallback        EvolutionBot? @relation(fields: [botIdFallback], references: [id])
@@ -545,6 +585,8 @@ model Flowise {
   keepOpen        Boolean?         @default(false)
   debounceTime    Int?             @db.Int
   ignoreJids      Json?
+  splitMessages   Boolean?         @default(false)
+  timePerChar     Int?             @default(50) @db.Int
   triggerType     TriggerType?
   triggerOperator TriggerOperator?
   triggerValue    String?
@@ -566,10 +608,20 @@ model FlowiseSetting {
   keepOpen          Boolean?  @default(false)
   debounceTime      Int?      @db.Int
   ignoreJids        Json?
+  splitMessages     Boolean?  @default(false)
+  timePerChar       Int?      @default(50) @db.Int
   createdAt         DateTime? @default(dbgenerated("CURRENT_TIMESTAMP")) @db.Timestamp
   updatedAt         DateTime  @updatedAt @db.Timestamp
   Fallback          Flowise?  @relation(fields: [flowiseIdFallback], references: [id])
   flowiseIdFallback String?   @db.VarChar(100)
   Instance          Instance  @relation(fields: [instanceId], references: [id], onDelete: Cascade)
   instanceId        String    @unique
+}
+
+model IsOnWhatsapp {
+  id         String   @id @default(cuid())
+  remoteJid  String   @unique @db.VarChar(100)
+  jidOptions String
+  createdAt  DateTime @default(dbgenerated("CURRENT_TIMESTAMP")) @db.Timestamp
+  updatedAt  DateTime @updatedAt @db.Timestamp
 }
